@@ -15,8 +15,10 @@ include $(DEVKITARM)/ds_rules
 # all directories are relative to this makefile
 #---------------------------------------------------------------------------------
 BUILD		:=	build
-SOURCES		:=	source source/IpcServices source/Sound source/mmc
-INCLUDES	:=	source ../common build
+SOURCES		:=	source source/IpcServices source/Sound source/mmc source/usb \
+				usb/tinyusb usb/tinyusb/device usb/tinyusb/class/cdc usb/tinyusb/common usb/tinyusb/osal
+INCLUDES	:=	source ../common build source/usb \
+				usb/tinyusb usb/tinyusb/device usb/tinyusb/class/cdc usb/tinyusb/common usb/tinyusb/osal
 DATA		:=
  
 #---------------------------------------------------------------------------------

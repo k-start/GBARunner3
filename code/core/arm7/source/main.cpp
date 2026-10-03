@@ -20,11 +20,13 @@
 #include "ExitMode.h"
 #include "FramerateAdjustment.h"
 #include "mmc/tmio.h"
+#include "usb/LinkUsb.h"
 
 static FsIpcService sFsIpcService;
 static GbaSoundIpcService sGbaSoundIpcService;
 static SystemIpcService sSystemIpcService;
 static GbaSaveIpcService sGbaSaveIpcService;
+rtos_mutex_t gCardMutex;
 static rtos_event_t sVBlankEvent;
 static volatile u8 sMcuIrqFlag = false;
 static Arm7State sState;
@@ -113,7 +115,11 @@ static void initializeArm7()
         TMIO_init();
     }
     
+    // NB: Slot-1 card-bus delegation to ARM7 happens in the bootstrap (ARM9) before initIpc(),
+    // because only the ARM9 can set that EXMEMCNT bit; by the time we run, the bus is ARM7's.
+    rtos_createMutex(&gCardMutex);
     initializeIpcServices();
+    linkUsbInit();
 
     snd_setMasterVolume(127);
     snd_setMasterEnable(true);
@@ -196,6 +202,7 @@ int main()
     while (true)
     {
         rtos_waitEvent(&sVBlankEvent, true, true);
+        linkUsbVBlankTick();
         updateArm7();
     }
     

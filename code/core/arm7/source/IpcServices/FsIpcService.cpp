@@ -50,19 +50,25 @@ void FsIpcService::HandleMessage(u32 data)
 void FsIpcService::SetupDldi(const fs_ipc_cmd_t* cmd) const
 {
     memcpy(_dldi_start, cmd->buffer, sizeof(_dldi_start));
+    rtos_lockMutex(&gCardMutex);
     bool result = _DLDI_startup_ptr();
+    rtos_unlockMutex(&gCardMutex);
     SendResponseMessage(result);
 }
 
 void FsIpcService::DldiReadSectors(const fs_ipc_cmd_t* cmd) const
 {
+    rtos_lockMutex(&gCardMutex);
     _DLDI_readSectors_ptr(cmd->sector, cmd->count, cmd->buffer);
+    rtos_unlockMutex(&gCardMutex);
     ipc_setArm7SyncBits(ipc_getArm9SyncBits());
 }
 
 void FsIpcService::DldiWriteSectors(const fs_ipc_cmd_t* cmd) const
 {
+    rtos_lockMutex(&gCardMutex);
     _DLDI_writeSectors_ptr(cmd->sector, cmd->count, cmd->buffer);
+    rtos_unlockMutex(&gCardMutex);
     ipc_setArm7SyncBits(ipc_getArm9SyncBits());
 }
 

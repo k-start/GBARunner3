@@ -10,7 +10,9 @@ ENTRY(_start)
 MEMORY
 {
 	itcm	: ORIGIN = 0x00000000, LENGTH = 32K
-	ewram   : ORIGIN = 0x02040000, LENGTH = 4M - 2M - 256K
+	/* The last 4K (0x021FF000 - 0x02200000) is reserved for the ARM7 <-> ARM9 link rings
+	   (see common/LinkRing.h); 0x02200000+ is the linear GBA ROM region. */
+	ewram   : ORIGIN = 0x02040000, LENGTH = 4M - 2M - 256K - 4K
 	dtcm	: ORIGIN = 0xFFFFC000, LENGTH = 16K
 	vrama	: ORIGIN = 0x06800000, LENGTH = 128K
 	vramab	: ORIGIN = 0x06800000, LENGTH = 256K

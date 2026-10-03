@@ -457,6 +457,7 @@ extern "C" void gbaRunnerMain(int argc, char* argv[])
     setupLogger();
 
     mem_setMainMemoryPriority(EXMEMCNT_MAIN_MEM_PRIO_ARM7);
+    mem_setDsCartridgeCpu(EXMEMCNT_SLOT1_CPU_ARM7); // delegate Slot-1 card bus (DLDI SD + USB) to ARM7
 
     startSplashScreenAnimation();
 

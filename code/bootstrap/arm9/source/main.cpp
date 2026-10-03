@@ -80,6 +80,11 @@ int main(int argc, char* argv[])
     rtos_disableIrqMask(~0u);
     rtos_ackIrqMask(~0u);
 
+    // Delegate Slot-1 to the ARM7 BEFORE initIpc(): the ARM7 runs linkUsbInit() during the
+    // initIpc() handshake, and its USB INIT/CONNECT card commands only reach the DSpico if the
+    // card bus is already ARM7-owned. Only the ARM9 can set this EXMEMCNT bit (the ARM7 cannot).
+    *(vu16*)0x04000204 |= 0x800;
+
     initIpc();
     tryInitDldi();
 
