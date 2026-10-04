@@ -98,3 +98,39 @@ static inline bool linkRing_pop(LinkRing* r, u8* b)
 	r->tail = (t + 1) & LINK_RING_MASK;
 	return true;
 }
+
+// Either side: number of bytes currently in the ring.
+static inline u32 linkRing_count(const LinkRing* r)
+{
+	return ((r->head & LINK_RING_MASK) - (r->tail & LINK_RING_MASK)) & LINK_RING_MASK;
+}
+
+// Producer: number of bytes that can still be pushed.
+static inline u32 linkRing_free(const LinkRing* r)
+{
+	return (LINK_RING_SIZE - 1) - linkRing_count(r);
+}
+
+// Consumer: read the byte `offset` positions after the tail without consuming it.
+// Only valid for offset < linkRing_count(r).
+static inline u8 linkRing_peek(const LinkRing* r, u32 offset)
+{
+	return r->data[((r->tail & LINK_RING_MASK) + offset) & LINK_RING_MASK];
+}
+
+// Producer: write n bytes all-or-nothing, publishing them with a single head update so the consumer
+// never sees a partial block. Returns false (and writes nothing) if there isn't room.
+static inline bool linkRing_writeBlock(LinkRing* r, const u8* data, u32 n)
+{
+	if (linkRing_free(r) < n)
+	{
+		return false;
+	}
+	u32 h = r->head & LINK_RING_MASK;
+	for (u32 i = 0; i < n; i++)
+	{
+		r->data[(h + i) & LINK_RING_MASK] = data[i];
+	}
+	r->head = (h + n) & LINK_RING_MASK;
+	return true;
+}

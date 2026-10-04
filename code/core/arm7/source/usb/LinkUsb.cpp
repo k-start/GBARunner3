@@ -5,7 +5,7 @@
 #include "device/usbd_pvt.h"
 #include "usb_descriptors.h"
 #include "LinkUsb.h"
-#include "../../common/LinkRing.h"
+#include "../../common/LinkProtocol.h"
 
 // DSpico link-cable USB bridge (ARM7).
 //
@@ -27,27 +27,26 @@
 //   - once per VBlank, the ARM7 main loop defers a pump call into the task thread via
 //     usbd_defer_func (so TX data produced by the ARM9 and the heartbeat flow without USB events).
 //
-// Phase 1 (loopback): bytes from the PC are echoed back (RX ring -> TX ring -> CDC IN).
-// Phase 2 replaces the echo with the ARM9 SIO bridge; the CDC <-> ring shuttling stays the same.
+// Data path (packet framing: common/LinkProtocol.h):
+//   PC -> CDC OUT -> RX ring -> ARM9 (parses packets)
+//   ARM9 -> TX ring -> (whole packets) -> CDC IN -> PC, plus the ARM7's own heartbeat packets.
 
-#define TX_BATCH 64
-#define HB_MSG_MAX 72 // "HB " + 5 fields of up to "x=" + 8 hex digits + space
-
-static u8 sTxBuf[TX_BATCH];
-
-// Diagnostics, reported by the heartbeat (all hex).
-static volatile u32 sCardIrqCount = 0;    // i: card-IRQ batches handled by the DCD thread
-static volatile u32 sRxCallbackCount = 0; // r: tud_cdc_rx_cb calls (OUT data received)
-static volatile u32 sEchoByteCount = 0;   // e: bytes echoed PC -> DS -> PC
-static volatile u32 sPumpCallCount = 0;   // p: pump invocations
-static volatile u32 sVBlankCount = 0;     // v: VBlank ticks from the ARM7 main loop (60 Hz)
+// Diagnostics, reported in the ARM7 heartbeat packet (LinkArm7HeartbeatPayload).
+static volatile u32 sCardIrqCount = 0;    // card-IRQ batches handled by the DCD thread
+static volatile u32 sUsbRxBytes = 0;      // bytes received from the PC (CDC OUT)
+static volatile u32 sTxPackets = 0;       // TX-ring packets forwarded to the PC
+static volatile u32 sTxResyncBytes = 0;   // TX-ring bytes discarded (not at a packet start)
+static volatile u32 sPumpCallCount = 0;   // pump invocations
+static volatile u32 sVBlankCount = 0;     // VBlank ticks from the ARM7 main loop (60 Hz)
+static volatile u32 sDtrConnects = 0;     // DTR rising edges
 static u32 sLastHeartbeatVBlank = 0;
-static u32 sLastRxVBlank = 0;
 static volatile bool sPumpDeferred = false; // a deferred pump is queued and not yet run
 
-// Move as many bytes as fit from the tinyusb CDC OUT FIFO into the shared RX ring. Bytes that
-// don't fit stay in the tinyusb FIFO (which back-pressures the host) and are picked up by the
-// next pump, so nothing is dropped.
+static u8 sPktBuf[LINK_PKT_MAX_SIZE];
+
+// Move as many bytes as fit from the tinyusb CDC OUT FIFO into the shared RX ring (consumed by the
+// ARM9). Bytes that don't fit stay in the tinyusb FIFO, which back-pressures the host, and are
+// picked up by the next pump, so nothing is dropped.
 static void linkUsbDrainCdcRx(void)
 {
 	LinkRing* rx = linkRxRing();
@@ -59,96 +58,96 @@ static void linkUsbDrainCdcRx(void)
 			break;
 		}
 		linkRing_push(rx, b);
-		sLastRxVBlank = sVBlankCount;
+		sUsbRxBytes++;
 	}
 }
 
-// Append "tag<value-as-hex> " to msg. Minimal: avoids newlib snprintf, whose code size
-// overflows the ARM7 IWRAM.
-static void linkAppendField(char* msg, int& p, const char* tag, u32 val)
+// Forward complete packets from the TX ring (produced by the ARM9) to the CDC IN endpoint. Only
+// whole packets are forwarded, so packets the ARM7 writes itself can go in between them.
+// Returns true if anything was written.
+static bool linkUsbForwardTxPackets(void)
 {
-	static const char digits[] = "0123456789abcdef";
-	char buf[8];
-	int n = 0;
-	do
+	LinkRing* tx = linkTxRing();
+	bool wrote = false;
+	while (true)
 	{
-		buf[n++] = digits[val & 0xF];
-		val >>= 4;
-	} while (val != 0 && n < 8);
-	while (*tag && p < HB_MSG_MAX - 1)
-		msg[p++] = *tag++;
-	while (n > 0 && p < HB_MSG_MAX - 1)
-		msg[p++] = buf[--n];
-	if (p < HB_MSG_MAX - 1)
-		msg[p++] = ' ';
+		u32 avail = linkRing_count(tx);
+		if (avail == 0)
+		{
+			break;
+		}
+		if (linkRing_peek(tx, 0) != LINK_PKT_SYNC)
+		{
+			u8 junk;
+			linkRing_pop(tx, &junk); // not a packet start: discard and resync
+			sTxResyncBytes++;
+			continue;
+		}
+		if (avail < 3)
+		{
+			break; // can't happen with linkRing_writeBlock producers, but be safe
+		}
+		u32 total = linkRing_peek(tx, 2) + LINK_PKT_OVERHEAD;
+		if (avail < total || tud_cdc_write_available() < total)
+		{
+			break; // wait for the rest / for room in the CDC FIFO
+		}
+		for (u32 i = 0; i < total; i++)
+		{
+			linkRing_pop(tx, &sPktBuf[i]);
+		}
+		tud_cdc_write(sPktBuf, total);
+		sTxPackets++;
+		wrote = true;
+	}
+	return wrote;
 }
 
-static void linkUsbSendHeartbeat(void)
+static bool linkUsbSendHeartbeat(void)
 {
-	char msg[HB_MSG_MAX];
-	int p = 0;
-	const char* pre = "HB ";
-	while (*pre && p < HB_MSG_MAX - 1)
-		msg[p++] = *pre++;
-	linkAppendField(msg, p, "i=", sCardIrqCount);
-	linkAppendField(msg, p, "r=", sRxCallbackCount);
-	linkAppendField(msg, p, "e=", sEchoByteCount);
-	linkAppendField(msg, p, "p=", sPumpCallCount);
-	linkAppendField(msg, p, "v=", sVBlankCount);
-	msg[p - 1] = '\n'; // replace the trailing space
-	if (tud_cdc_write_available() >= (u32)p)
+	LinkArm7HeartbeatPayload hb;
+	hb.vblank = sVBlankCount;
+	hb.cardIrqs = sCardIrqCount;
+	hb.usbRxBytes = sUsbRxBytes;
+	hb.txPackets = sTxPackets;
+	hb.txResyncBytes = sTxResyncBytes;
+	hb.rxRingUsed = (u16)linkRing_count(linkRxRing());
+	hb.txRingUsed = (u16)linkRing_count(linkTxRing());
+	hb.pumps = sPumpCallCount;
+	hb.dtrConnects = sDtrConnects;
+	u32 size = linkPkt_build(sPktBuf, LINK_PKT_ARM7_HB, &hb, sizeof(hb));
+	if (tud_cdc_write_available() < size)
 	{
-		tud_cdc_write(msg, (u32)p);
-		tud_cdc_write_flush();
+		return false;
 	}
+	tud_cdc_write(sPktBuf, size);
+	return true;
 }
 
 // Must only be called from the task thread (i.e. from a tinyusb callback or deferred call).
 void linkUsbPump(void)
 {
 	sPumpCallCount++;
-	LinkRing* rx = linkRxRing();
-	LinkRing* tx = linkTxRing();
-	u8 b;
 
-	linkUsbDrainCdcRx(); // pick up anything left in the CDC FIFO while the RX ring was full
+	linkUsbDrainCdcRx(); // PC -> RX ring (anything left in the CDC FIFO while the ring was full)
 
-	// Phase 1 echo: PC -> RX ring -> TX ring. (Removed in Phase 2; ARM9 consumes the RX ring.)
-	while (!linkRing_isFull(tx) && linkRing_pop(rx, &b))
-	{
-		linkRing_push(tx, b);
-		++sEchoByteCount;
-	}
-
-	if (!tud_cdc_connected()) // DTR not asserted: nobody is listening
+	if (!tud_cdc_connected()) // DTR not asserted: nobody is listening; leave TX data queued
 	{
 		return;
 	}
 
-	// Drain the TX ring to the CDC IN endpoint (DS -> PC). Only pop what the CDC TX FIFO can
-	// take: tud_cdc_write() silently drops the excess.
-	u32 room = tud_cdc_write_available();
-	if (room > TX_BATCH)
-	{
-		room = TX_BATCH;
-	}
-	u32 count = 0;
-	while (count < room && linkRing_pop(tx, &sTxBuf[count]))
-	{
-		++count;
-	}
-	if (count > 0)
-	{
-		tud_cdc_write(sTxBuf, count);
-		tud_cdc_write_flush();
-	}
+	bool wrote = linkUsbForwardTxPackets(); // ARM9 -> PC
 
-	// Heartbeat every ~1 s (60 VBlanks); muted for 2 s after received data so it doesn't get
-	// mixed into a loopback echo.
-	if (sVBlankCount - sLastHeartbeatVBlank >= 60 && sVBlankCount - sLastRxVBlank >= 120)
+	// ARM7 heartbeat every ~1 s (60 VBlanks), between packets.
+	if (sVBlankCount - sLastHeartbeatVBlank >= 60)
 	{
 		sLastHeartbeatVBlank = sVBlankCount;
-		linkUsbSendHeartbeat();
+		wrote |= linkUsbSendHeartbeat();
+	}
+
+	if (wrote)
+	{
+		tud_cdc_write_flush();
 	}
 }
 
@@ -158,8 +157,22 @@ void linkUsbPump(void)
 void tud_cdc_rx_cb(uint8_t itf)
 {
 	(void)itf;
-	sRxCallbackCount++;
 	linkUsbPump();
+}
+
+// Host opened (DTR high) or closed (DTR low) the port. tinyusb makes the CDC TX FIFO overwritable
+// while DTR is low, and anything queued for a previous session may end mid-packet, so start every
+// new session with an empty FIFO. Whole packets still waiting in the TX ring are kept.
+void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
+{
+	(void)itf;
+	(void)rts;
+	if (dtr)
+	{
+		sDtrConnects++;
+		tud_cdc_write_clear();
+		linkUsbPump();
+	}
 }
 
 void tud_cdc_tx_complete_cb(uint8_t itf)

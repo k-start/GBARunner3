@@ -4,8 +4,7 @@
 // (dcd_dspico.cpp) and the tinyusb task thread (LinkUsb.cpp).
 void linkUsbInit(void);
 
-// Pump the link rings: Phase 1 echoes the RX ring back to the TX ring (loopback), then drains
-// the TX ring to the CDC IN endpoint. In Phase 2 the echo is replaced by the ARM9 SIO read/write.
+// Pump the link: CDC OUT -> RX ring, whole TX-ring packets -> CDC IN, plus the ARM7 heartbeat.
 // Must only be called from the tinyusb task thread (CDC callbacks / deferred calls).
 void linkUsbPump(void);
 

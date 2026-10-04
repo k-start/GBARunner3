@@ -45,6 +45,7 @@
 #include "MemoryEmulator/Arm/ArmDispatchTable.h"
 #include "VirtualMachine/VMUndefinedArmTable.h"
 #include "arm9Clock.h"
+#include "Peripherals/LinkSio.h"
 
 #define DEFAULT_ROM_FILE_PATH           "/rom.gba"
 #define BIOS_FILE_PATH                  "/_gba/bios.bin"
@@ -528,6 +529,8 @@ extern "C" void gbaRunnerMain(int argc, char* argv[])
     setupIWramDataCache();
     setupEWramDataCache();
     setupArm9Clock();
+
+    linkSio_init(); // link cable: queue the HELLO packet for the PC (before VBlank IRQs start)
 
     rtos_setIrqMask(RTOS_IRQ_VBLANK);
     rtos_ackIrqMask(~0u);

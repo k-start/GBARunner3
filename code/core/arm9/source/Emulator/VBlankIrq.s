@@ -30,6 +30,15 @@ updateDisplayCaptureVramD:
 checkSaveWrite:
     str r13, jumpToCaptureUpdate
 
+#ifndef GBAR3_TEST
+    // Link cable (USB) bridge: once per frame. Same calling convention as vblankDma below:
+    // r13/lr are scratch here, r0-r3/r12 must be preserved, r4 holds the irq flags (callee-saved).
+    ldr sp,= dtcmIrqStackEnd
+    push {r0-r3,r12}
+    bl linkSio_vblank
+    pop {r0-r3,r12}
+#endif
+
     // This is replaced by a nop when no vblank dma is in use
 .global emu_vblankDmaJumpInstruction
 emu_vblankDmaJumpInstruction:
