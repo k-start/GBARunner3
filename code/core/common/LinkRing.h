@@ -28,10 +28,16 @@ typedef struct
 #define LINK_RX_RING_ADDR 0x021FF000 // PC -> DS (CDC RX -> SIO RX)
 #define LINK_TX_RING_ADDR 0x021FF800 // DS -> PC (SIO TX -> CDC TX)
 
+// Diagnostics: one spare word after the RX ring (inside the reserved 4K). The ARM9 writes its boot
+// progress here through the normal (cached) address plus a cache-line clean, so it works from the
+// first instruction of crt0 and needs neither the uncached alias nor the ring code; the ARM7 reads it
+// directly and reports it in its heartbeat. 0x01xx = crt0, 1-15 = gbaRunnerMain (see main.cpp).
+#define LINK_ARM9_STAGE_ADDR 0x021FF7F0
+
 #ifdef __cplusplus
-static_assert(sizeof(LinkRing) <= 0x800, "two rings must fit the 4K reservation");
+static_assert(sizeof(LinkRing) <= 0x7F0, "rings must fit the 4K reservation (and leave the stage word)");
 #else
-_Static_assert(sizeof(LinkRing) <= 0x800, "two rings must fit the 4K reservation");
+_Static_assert(sizeof(LinkRing) <= 0x7F0, "rings must fit the 4K reservation (and leave the stage word)");
 #endif
 
 static inline u32 linkRing_accessAddr(u32 addr)

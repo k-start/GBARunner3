@@ -146,26 +146,27 @@
         .short emu_timerCntLStore16
     .elseif (\index << 1) == GBA_REG_OFFS_TM2CNT_H
         .short emu_timerCntHStore16
+    // link cable (Phase 2a): Timer 3 and SIO stores are logged, see Peripherals/Sio.s
     .elseif (\index << 1) == GBA_REG_OFFS_TM3CNT_L
-        .short emu_timerCntLStore16
+        .short emu_linkTimerCntLStore16
     .elseif (\index << 1) == GBA_REG_OFFS_TM3CNT_H
-        .short emu_timerCntHStore16
+        .short emu_linkTimerCntHStore16
     .elseif (\index << 1) == GBA_REG_OFFS_SIODATA32_L
-        .short emu_ioStore16
+        .short emu_linkIoStore16
     .elseif (\index << 1) == GBA_REG_OFFS_SIODATA32_H
-        .short emu_ioStore16
+        .short emu_linkIoStore16
     .elseif (\index << 1) == GBA_REG_OFFS_SIOMULTI2
-        .short emu_ioStore16
+        .short emu_linkIoStore16
     .elseif (\index << 1) == GBA_REG_OFFS_SIOMULTI3
-        .short emu_ioStore16
+        .short emu_linkIoStore16
     .elseif (\index << 1) == GBA_REG_OFFS_SIOCNT
-        .short emu_regSioCntStore16
+        .short emu_linkSioCntStore16
     .elseif (\index << 1) == GBA_REG_OFFS_SIOMULTI_SEND
-        .short emu_ioStore16
+        .short emu_linkIoStore16
     .elseif (\index << 1) == GBA_REG_OFFS_KEYCNT
         .short emu_regKeyControlStore16
     .elseif (\index << 1) == GBA_REG_OFFS_RCNT
-        .short emu_ioStore16
+        .short emu_linkIoStore16
     .elseif (\index << 1) == GBA_REG_OFFS_JOYCNT
         .short emu_ioStore16
     .elseif (\index << 1) == GBA_REG_OFFS_JOY_RECV_L

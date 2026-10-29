@@ -55,6 +55,11 @@
         .short emu_timerCntLoad32
     .elseif (\index << 2) == GBA_REG_OFFS_TM3CNT
         .short emu_timerCntLoad32
+    // link cable (Phase 2a): SIO/RCNT loads are logged (changes only), see Peripherals/Sio.s
+    .elseif ((\index << 2) >= GBA_REG_OFFS_SIODATA32) && ((\index << 2) <= GBA_REG_OFFS_SIOCNT)
+        .short emu_linkIoLoad32
+    .elseif (\index << 2) == GBA_REG_OFFS_RCNT
+        .short emu_linkIoLoad32
     .elseif (\index << 2) == GBA_REG_OFFS_KEYINPUT
         .short emu_regKeyInputKeyControlLoad32
     .elseif ((\index << 2) > GBA_REG_OFFS_JOYSTAT) && ((\index << 2) < GBA_REG_OFFS_IE)

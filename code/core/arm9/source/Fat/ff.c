@@ -1,3 +1,8 @@
+/* Link-cable port: -Os (ARM, never Thumb) to free VRAM A, which holds the ARM9 core's .text/.bss and is
+   full. FatFS is cold at runtime here: ROM streaming uses a cluster map (SdCache), so FatFS only runs at
+   boot and for save files. */
+#pragma GCC optimize("Os")
+
 /*----------------------------------------------------------------------------/
 /  FatFs - Generic FAT Filesystem Module  R0.13c                              /
 /-----------------------------------------------------------------------------/

@@ -1,11 +1,24 @@
 .section ".crt0", "ax"
 .arm
 
+// Link-cable diagnostics: record boot progress in a word the ARM7 reports over USB (LINK_ARM9_STAGE_ADDR
+// in common/LinkRing.h). Normal address + D-cache line clean + write-buffer drain, so it works whether
+// or not the caches/MPU are on. Clobbers r0, r1.
+.macro link_stage value
+    ldr r0,= 0x021FF7F0
+    ldr r1,= \value
+    str r1, [r0]
+    mcr p15, 0, r0, c7, c10, 1 // clean D-cache line
+    mov r1, #0
+    mcr p15, 0, r1, c7, c10, 4 // drain write buffer
+.endm
+
 .global _start
 .type _start, %function
 _start:
     mov r11, r0 // argc
     mov r12, r1 // argv
+    link_stage 0x100 // crt0 entered
     // configure cp15
     // disable itcm, dtcm, caches and mpu
     ldr r0,= 0x00002078
@@ -38,6 +51,7 @@ _start:
     // and use low vectors and armv4t backwards compatibility
     ldr r0,= 0x0005D07D
     mcr p15, 0, r0, c1, c0
+    link_stage 0x101 // MPU + caches on
 
     // copy itcm in place
     ldr r0,= __itcm_lma
@@ -113,6 +127,7 @@ ewram_bss_done:
     cmp r0, r1
     bne 1b
 vramhi_bss_done:
+    link_stage 0x102 // sections copied, bss cleared
     // bkpt #0
 
     msr cpsr_c, #0x92
@@ -126,6 +141,7 @@ vramhi_bss_done:
 
     push {r11, r12}
     bl __libc_init_array
+    link_stage 0x103 // static constructors done
     pop {r0, r1}
 
     // idk why this is needed

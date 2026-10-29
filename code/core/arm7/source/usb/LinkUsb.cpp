@@ -115,6 +115,7 @@ static bool linkUsbSendHeartbeat(void)
 	hb.txRingUsed = (u16)linkRing_count(linkTxRing());
 	hb.pumps = sPumpCallCount;
 	hb.dtrConnects = sDtrConnects;
+	hb.arm9Stage = *(vu32*)LINK_ARM9_STAGE_ADDR;
 	u32 size = linkPkt_build(sPktBuf, LINK_PKT_ARM7_HB, &hb, sizeof(hb));
 	if (tud_cdc_write_available() < size)
 	{
@@ -230,6 +231,7 @@ void linkUsbInit(void)
 	// The shared rings live in fixed EWRAM that is not zeroed on a cold boot.
 	linkRing_reset(linkRxRing());
 	linkRing_reset(linkTxRing());
+	*(vu32*)LINK_ARM9_STAGE_ADDR = 0; // the ARM9 core writes its boot progress here
 
 	tusb_rhport_init_t devInit =
 	{

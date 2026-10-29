@@ -46,6 +46,25 @@
 #include "VirtualMachine/VMUndefinedArmTable.h"
 #include "arm9Clock.h"
 #include "Peripherals/LinkSio.h"
+#include "LinkProtocol.h"
+
+// Link-cable diagnostics: report boot progress over USB as 'B' packets. This is deliberately ARM code
+// here (not in the Thumb-compiled LinkSio.c) and has no state, so it works from the very start of
+// gbaRunnerMain and even if Thumb code were the problem. Only used before VBlank IRQs are enabled,
+// so it is the only TX-ring producer at that time. Packets wait in the ring until the PC opens the
+// port.
+static void linkBootStage(u32 stage, u32 arg = 0)
+{
+    // 1) progress word for the ARM7 heartbeat: no alias, no ring code (see crt0.s link_stage)
+    *(vu32*)LINK_ARM9_STAGE_ADDR = stage;
+    __asm__ volatile("mcr p15, 0, %0, c7, c10, 1\n\tmcr p15, 0, %1, c7, c10, 4"
+                     :: "r"(LINK_ARM9_STAGE_ADDR), "r"(0) : "memory");
+    // 2) 'B' packet through the TX ring
+    u32 payload[2] = { stage, arg };
+    u8 pkt[sizeof(payload) + LINK_PKT_OVERHEAD];
+    u32 size = linkPkt_build(pkt, LINK_PKT_BOOT_STAGE, payload, sizeof(payload));
+    linkRing_writeBlock(linkTxRing(), pkt, size);
+}
 
 #define DEFAULT_ROM_FILE_PATH           "/rom.gba"
 #define BIOS_FILE_PATH                  "/_gba/bios.bin"
@@ -433,6 +452,7 @@ static void stopSplashScreenAnimation()
 extern "C" void gbaRunnerMain(int argc, char* argv[])
 {
     heap_init();
+    linkBootStage(1);
 
     REG_DISPCNT = 0x10000;
     REG_DISPCNT_SUB = 0x10000;
@@ -456,11 +476,13 @@ extern "C" void gbaRunnerMain(int argc, char* argv[])
 
     Environment::Initialize();
     setupLogger();
+    linkBootStage(2, Environment::IsDsiMode());
 
     mem_setMainMemoryPriority(EXMEMCNT_MAIN_MEM_PRIO_ARM7);
     mem_setDsCartridgeCpu(EXMEMCNT_SLOT1_CPU_ARM7); // delegate Slot-1 card bus (DLDI SD + USB) to ARM7
 
     startSplashScreenAnimation();
+    linkBootStage(3);
 
     bool mountResult;
     if (shouldMountDsiSd(argc, argv))
@@ -477,14 +499,18 @@ extern "C" void gbaRunnerMain(int argc, char* argv[])
     // if (Environment::SupportsAgbSemihosting())
         // mountAgbSemihosting();
 
+    linkBootStage(4, mountResult);
     gAppSettingsService.TryLoadAppSettings(SETTINGS_FILE_PATH);
+    linkBootStage(5);
 
     patch_resetSwiPatches();
     loadGbaBios();
     relocateGbaBios();
     applyBiosVmPatches();
+    linkBootStage(6);
     const char* romPath = argc > 1 ? argv[1] : DEFAULT_ROM_FILE_PATH;
     loadGbaRom(romPath);
+    linkBootStage(7);
     char* romExtension = strrchr(romPath, '.');
     if (romExtension)
     {
@@ -494,13 +520,17 @@ extern "C" void gbaRunnerMain(int argc, char* argv[])
         romExtension[4] = '\0';
     }
     loadGameSpecificSettings();
+    linkBootStage(8);
     handleSave(romPath);
+    linkBootStage(9);
     SelfModifyingPatches().ApplyPatches(gAppSettingsService.GetAppSettings().runSettings);
+    linkBootStage(10);
 
     waitSplashScreenAnimation();
     stopSplashScreenAnimation();
     delete sSplashScreen;
     sSplashScreen = nullptr;
+    linkBootStage(11);
 
     const auto& displaySettings = gAppSettingsService.GetAppSettings().displaySettings;
     gGbaDisplayConfigurationService.ApplyDisplaySettings(displaySettings);
@@ -516,6 +546,7 @@ extern "C" void gbaRunnerMain(int argc, char* argv[])
     memset((void*)((u32)GFX_BG_MAIN + 0x40000), 0, 128 * 1024); // vram B
     memset((void*)GFX_OBJ_MAIN, 0, 32 * 1024);
     memset(emu_ioRegisters, 0, sizeof(emu_ioRegisters));
+    linkBootStage(12);
     memu_initializeArmDispatchTable();
     vm_initializeUndefinedArmTable();
     setupJit();
@@ -530,7 +561,9 @@ extern "C" void gbaRunnerMain(int argc, char* argv[])
     setupEWramDataCache();
     setupArm9Clock();
 
+    linkBootStage(13);
     linkSio_init(); // link cable: queue the HELLO packet for the PC (before VBlank IRQs start)
+    linkBootStage(14);
 
     rtos_setIrqMask(RTOS_IRQ_VBLANK);
     rtos_ackIrqMask(~0u);

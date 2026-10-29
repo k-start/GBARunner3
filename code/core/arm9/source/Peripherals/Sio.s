@@ -39,9 +39,83 @@ arm_func emu_regSioCntStore16
     b emu_updateIrqs
 
 regSioCntStore16_multi:
-    biceq r9, r9, #0x7C
-    orreq r9, r9, #0xC
+        bne regSioCntStore16_end // UART / JOY bus: store as-is
+    // Multiplayer mode (link cable): the status bits and, with the link partner enabled, the whole
+    // transfer are handled by linkSio_multiCntStore (LinkSio.c). It returns the new SIOCNT value,
+    // with bit 31 set if the SIO IRQ must be raised. r11 (&SIOCNT) is callee-saved.
+    push {r0-r3,lr}
+    mov r0, r9
+    bl linkSio_multiCntStore
+    mov r9, r0
+    pop {r0-r3,lr}
+    strh r9, [r11]
+    tst r9, #(1 << 31)
+        bxeq lr
+    ldr r12,= vm_emulatedIfImeIe
+    ldr r10, [r12]
+    orr r10, r10, #(1 << 7) // SIO IRQ
+    str r10, [r12]
+    b emu_updateIrqs
 
 regSioCntStore16_end:
     strh r9, [r11]
+    bx lr
+
+// ---------------------------------------------------------------------------------------------
+// Link cable, Phase 2a: observation hooks. Each wrapper logs the guest access (LinkSio.c) and
+// then behaves exactly like the original handler, so emulation is unchanged.
+// Convention (store/load handlers): r8 = address, r9 = value, r10-r12 scratch, return via lr.
+// C calls follow the existing pattern (e.g. emu_dmaCntHStore16): save r0-r3,lr; r4-r11 are
+// callee-saved; r12 is scratch.
+// ---------------------------------------------------------------------------------------------
+
+.macro link_log func, width
+    push {r0-r3,lr}
+    mov r0, r8
+    mov r1, r9
+    mov r2, #\width
+    bl \func
+    pop {r0-r3,lr}
+.endm
+
+// stores (value logged as written by the guest, before any masking)
+arm_func emu_linkSioCntStore16
+    link_log linkSio_logStore, 2
+    b emu_regSioCntStore16
+
+arm_func emu_linkSioCntSioMultiSendStore32
+    link_log linkSio_logStore, 4
+    b emu_regSioCntSioMultiSendStore32
+
+arm_func emu_linkIoStore16
+    link_log linkSio_logStore, 2
+    b emu_ioStore16
+
+arm_func emu_linkIoStore32
+    link_log linkSio_logStore, 4
+    b emu_ioStore32
+
+arm_func emu_linkTimerCntLStore16
+    link_log linkSio_logStore, 2
+    b emu_timerCntLStore16
+
+arm_func emu_linkTimerCntHStore16
+    link_log linkSio_logStore, 2
+    b emu_timerCntHStore16
+
+arm_func emu_linkTimerCntStore32
+    link_log linkSio_logStore, 4
+    b emu_timerCntStore32
+
+// loads (value logged as returned to the guest; LinkSio.c only records changes)
+arm_func emu_linkIoLoad16
+    ldr r11,= (emu_ioRegisters - 0x04000000)
+    ldrh r9, [r11, r8]
+    link_log linkSio_logLoad, 2
+    bx lr
+
+arm_func emu_linkIoLoad32
+    ldr r11,= (emu_ioRegisters - 0x04000000)
+    ldr r9, [r11, r8]
+    link_log linkSio_logLoad, 4
     bx lr

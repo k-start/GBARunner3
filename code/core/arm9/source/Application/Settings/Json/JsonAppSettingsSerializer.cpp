@@ -1,3 +1,8 @@
+// Link-cable port: compiled with -Os to free VRAM A (the ARM9 core's .text/.bss region is full).
+// This only runs once at boot to parse the settings file, so its speed doesn't matter.
+// (ARM only: Thumb breaks under the core's CP15 L4 setting, see Peripherals/LinkSio.c.)
+#pragma GCC optimize("Os")
+
 #include "common.h"
 #include <libtwl/mem/memSwap.h>
 #include <algorithm>
